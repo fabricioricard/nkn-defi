@@ -1,0 +1,22 @@
+# .gitignore
+# Binário compilado
+server.exe
+server
+
+# Arquivos de build
+*.exe
+*.test
+*.out
+
+# Dependências Go (não versionar vendor, vamos usar modules)
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+"@ | Out-File -Encoding utf8 .gitignore
