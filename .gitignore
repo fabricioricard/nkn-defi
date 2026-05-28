@@ -1,7 +1,6 @@
-# .gitignore
-# Binário compilado
-server.exe
-server
+﻿# Binário compilado
+/server
+/server.exe
 
 # Arquivos de build
 *.exe
@@ -19,4 +18,3 @@ vendor/
 # Arquivos de sistema
 .DS_Store
 Thumbs.db
-"@ | Out-File -Encoding utf8 .gitignore
