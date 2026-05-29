@@ -1,22 +1,32 @@
 ﻿package redis
 
 import (
-	"context"
-	"github.com/go-redis/redis/v8"
+    "context"
+    "encoding/json"
+    "time"
+    "github.com/go-redis/redis/v8"
 )
 
 type Cache struct {
-	client *redis.Client
+    client *redis.Client
 }
 
 func NewCache(rdb *redis.Client) *Cache {
-	return &Cache{client: rdb}
+    return &Cache{client: rdb}
 }
 
-// Métodos para implementar a interface ports/cache.Cache (vamos definir a interface)
-func (c *Cache) Get(ctx context.Context, key string) (string, error) {
-	return "", nil
+func (c *Cache) Get(ctx context.Context, key string, dest interface{}) error {
+    val, err := c.client.Get(ctx, key).Result()
+    if err != nil {
+        return err
+    }
+    return json.Unmarshal([]byte(val), dest)
 }
-func (c *Cache) Set(ctx context.Context, key string, value interface{}) error {
-	return nil
+
+func (c *Cache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+    data, err := json.Marshal(value)
+    if err != nil {
+        return err
+    }
+    return c.client.Set(ctx, key, data, ttl).Err()
 }

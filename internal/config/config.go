@@ -24,3 +24,10 @@ func getEnv(key, fallback string) string {
 	}
 	return fallback
 }
+
+func (c *Config) Port() string {
+    if port := os.Getenv("PORT"); port != "" {
+        return port
+    }
+    return "8080"
+}
