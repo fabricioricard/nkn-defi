@@ -1,20 +1,38 @@
-﻿# Binário compilado
+﻿# ========== Go ==========
+# Binário compilado (Windows/Linux)
 /server
 /server.exe
 
-# Arquivos de build
-*.exe
+# Builds de teste
 *.test
 *.out
 
-# Dependências Go (não versionar vendor, vamos usar modules)
+# Dependências Go (usamos modules, não vendor)
 vendor/
 
-# IDE
+# ========== Frontend React ==========
+# Dependências do Node
+frontend/node_modules/
+
+# Build de produção do React (gerado localmente ou pelo Docker)
+frontend/dist/
+
+# ========== Arquivos embutidos no binário Go ==========
+# O build do frontend é copiado para cá pelo Dockerfile multi-stage,
+# mas não deve ser versionado (é gerado durante a build da imagem)
+cmd/server/web/dist/
+
+# ========== Docker ==========
+# Arquivos de ambiente (se houver) com dados sensíveis
+.env
+
+# ========== IDE e editores ==========
 .idea/
 .vscode/
 *.swp
+*.swo
+*~
 
-# Arquivos de sistema
+# ========== Sistema operacional ==========
 .DS_Store
 Thumbs.db
