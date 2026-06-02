@@ -2,8 +2,8 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Bridge from './components/Bridge';
 import Swap from './components/Swap';
-import Portfolio from './components/Portfolio';
 import Pools from './components/Pools';
+import Portfolio from './components/Portfolio';
 
 function App() {
   return (
@@ -13,8 +13,8 @@ function App() {
           <Route path="/" element={<Bridge />} />
           <Route path="/bridge" element={<Bridge />} />
           <Route path="/swap" element={<Swap />} />
-          <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/pools" element={<Pools />} />
+          <Route path="/portfolio" element={<Portfolio />} />
         </Route>
       </Routes>
     </BrowserRouter>

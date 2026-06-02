@@ -1,15 +1,22 @@
 import { Outlet, NavLink } from 'react-router-dom';
-import { Box, Flex, Button, HStack, Icon } from '@chakra-ui/react';
-import { FaLink, FaExchangeAlt, FaChartPie, FaTint } from 'react-icons/fa';
+import {
+  Box, Flex, Button, HStack, Icon, Text,
+} from '@chakra-ui/react';
+import { FaLink, FaExchangeAlt, FaChartPie, FaTint, FaWallet } from 'react-icons/fa';
+import { useAccount, useConnect, useDisconnect } from 'wagmi';
 
 const links = [
   { to: '/bridge', label: 'Bridge', icon: FaLink },
   { to: '/swap', label: 'Swap', icon: FaExchangeAlt },
-  { to: '/portfolio', label: 'Portfolio', icon: FaChartPie },
   { to: '/pools', label: 'Pools', icon: FaTint },
+  { to: '/portfolio', label: 'Portfolio', icon: FaChartPie },
 ];
 
 export default function Layout() {
+  const { address, isConnected } = useAccount();
+  const { connect, connectors } = useConnect();
+  const { disconnect } = useDisconnect();
+
   return (
     <Box minH="100vh" bg="gray.900">
       <Flex
@@ -46,16 +53,26 @@ export default function Layout() {
               </HStack>
             </NavLink>
           ))}
-          <Button
-            as="a"
-            href="https://wallet.nkn.org/"
-            target="_blank"
-            size="sm"
-            variant="outline"
-            colorScheme="brand"
-          >
-            Connect Wallet
-          </Button>
+          {isConnected ? (
+            <HStack>
+              <Text fontSize="sm" color="gray.300">
+                {address?.slice(0, 6)}...{address?.slice(-4)}
+              </Text>
+              <Button size="sm" onClick={() => disconnect()} variant="outline" colorScheme="brand">
+                Disconnect
+              </Button>
+            </HStack>
+          ) : (
+            <Button
+              id="connect-wallet-btn"
+              size="sm"
+              colorScheme="brand"
+              leftIcon={<Icon as={FaWallet} />}
+              onClick={() => connect({ connector: connectors[0] })}
+            >
+              Connect Wallet
+            </Button>
+          )}
         </HStack>
       </Flex>
 

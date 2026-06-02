@@ -5,30 +5,41 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/fabricioricard/nkn-defi/internal/adapters/postgres"
 	"github.com/fabricioricard/nkn-defi/internal/app"
 )
 
 type Router struct {
-	poolUC *app.PoolUsecase
-	logg   *zap.Logger
+	poolUC     *app.PoolUsecase
+	logg       *zap.Logger
+	bridgeRepo *postgres.BridgeRepository
 }
 
-// NewRouter agora recebe o sistema de arquivos do frontend (React build)
-func NewRouter(poolUC *app.PoolUsecase, logg *zap.Logger, frontendFS fs.FS) chi.Router {
+// NewRouter recebe o sistema de arquivos do frontend e o repositório da Bridge.
+func NewRouter(
+	poolUC *app.PoolUsecase,
+	logg *zap.Logger,
+	frontendFS fs.FS,
+	bridgeRepo *postgres.BridgeRepository,
+) chi.Router {
 	r := chi.NewRouter()
-	rt := &Router{poolUC: poolUC, logg: logg}
+	rt := &Router{
+		poolUC:     poolUC,
+		logg:       logg,
+		bridgeRepo: bridgeRepo,
+	}
 
-	// Health check
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	})
 
-	// API v1
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/pools", rt.createPool)
 		r.Get("/pools", rt.listPools)
@@ -36,45 +47,115 @@ func NewRouter(poolUC *app.PoolUsecase, logg *zap.Logger, frontendFS fs.FS) chi.
 		r.Post("/pools/{id}/liquidity/add", rt.addLiquidity)
 		r.Post("/pools/{id}/swap", rt.swap)
 
-		// Bridge (stubs)
+		// Bridge (implementação real)
 		r.Post("/bridge/deposit", rt.createBridgeDeposit)
 		r.Get("/bridge/transactions", rt.getBridgeTransactions)
 	})
 
-	// Servir arquivos estáticos do frontend React
-	// O FileServer vai procurar automaticamente o index.html na raiz
 	r.Handle("/*", http.FileServer(http.FS(frontendFS)))
-
 	return r
 }
 
-// --- Stubs da Bridge (mantidos até implementação real) ---
-
+// createBridgeDeposit cria um novo pedido de depósito.
 func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"deposit_id":      "demo-" + fmt.Sprint(time.Now().Unix()),
-		"deposit_address": "NKN0000-EXAMPLE-ADDRESS",
+	var req struct {
+		EthAddress string `json:"eth_address"`
+		Amount     string `json:"amount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.EthAddress == "" || req.Amount == "" {
+		http.Error(w, "eth_address and amount are required", http.StatusBadRequest)
+		return
+	}
+
+	depositID := uuid.New().String()
+	nknAddress := os.Getenv("BRIDGE_NKN_ADDRESS") // endereço fixo da carteira custodiada
+	if nknAddress == "" {
+		http.Error(w, "bridge NKN address not configured", http.StatusInternalServerError)
+		return
+	}
+
+	dep := &postgres.BridgeDeposit{
+		ID:               depositID,
+		EthAddress:       req.EthAddress,
+		Amount:           req.Amount,
+		NknDepositAddress: nknAddress,
+		Status:           "pending",
+		Memo:             depositID, // o próprio ID serve como memo
+	}
+
+	if err := rt.bridgeRepo.InsertDeposit(r.Context(), dep); err != nil {
+		rt.logg.Error("failed to insert deposit", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]string{
+		"deposit_id":      depositID,
+		"deposit_address": nknAddress,
+		"memo":            depositID,
 		"expires_at":      time.Now().Add(1 * time.Hour).Format(time.RFC3339),
-	})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
+// getBridgeTransactions retorna as últimas transações do usuário.
+// Espera um query parameter "eth_address".
 func (rt *Router) getBridgeTransactions(w http.ResponseWriter, r *http.Request) {
+	ethAddress := r.URL.Query().Get("eth_address")
+	if ethAddress == "" {
+		http.Error(w, "eth_address query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Busca depósitos e retiradas reais
+	deposits, err := rt.bridgeRepo.ListDepositsByEthAddress(r.Context(), ethAddress)
+	if err != nil {
+		rt.logg.Error("failed to list deposits", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	withdrawals, err := rt.bridgeRepo.ListWithdrawalsByFromAddress(r.Context(), ethAddress)
+	if err != nil {
+		rt.logg.Error("failed to list withdrawals", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Formato unificado esperado pelo frontend
+	type bridgeTx struct {
+		ID        string `json:"id"`
+		Type      string `json:"type"`
+		Amount    string `json:"amount"`
+		Status    string `json:"status"`
+		Timestamp string `json:"timestamp"`
+	}
+	var txs []bridgeTx
+
+	for _, d := range deposits {
+		txs = append(txs, bridgeTx{
+			ID:        d.ID,
+			Type:      "deposit",
+			Amount:    d.Amount,
+			Status:    d.Status,
+			Timestamp: d.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	for _, w := range withdrawals {
+		txs = append(txs, bridgeTx{
+			ID:        w.ID,
+			Type:      "withdrawal",
+			Amount:    w.Amount,
+			Status:    w.Status,
+			Timestamp: w.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode([]map[string]interface{}{
-		{
-			"id":        "1",
-			"type":      "deposit",
-			"amount":    "1000",
-			"status":    "completed",
-			"timestamp": time.Now().Format(time.RFC3339),
-		},
-		{
-			"id":        "2",
-			"type":      "withdrawal",
-			"amount":    "500",
-			"status":    "pending",
-			"timestamp": time.Now().Format(time.RFC3339),
-		},
-	})
+	json.NewEncoder(w).Encode(txs)
 }

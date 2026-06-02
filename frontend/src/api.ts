@@ -16,7 +16,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ eth_address, amount }),
     }),
-  getBridgeTransactions: () => fetchJSON('/bridge/transactions'),
+
+  getBridgeTransactions: (ethAddress: string) =>
+    fetchJSON(`/bridge/transactions?eth_address=${encodeURIComponent(ethAddress)}`),
 
   // Pools
   getPools: () => fetchJSON('/pools'),
