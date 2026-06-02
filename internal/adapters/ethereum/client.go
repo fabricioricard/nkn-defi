@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -17,7 +18,7 @@ type Client struct {
 	minterPK *ecdsa.PrivateKey
 	minterAddr common.Address
 	chainID  *big.Int
-	wNKN     *WrappedNKN // binding gerado
+	wNKN     *WrappedNKN
 }
 
 func NewClient(rpcURL string) (*Client, error) {
@@ -29,14 +30,19 @@ func NewClient(rpcURL string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	privateKeyHex := os.Getenv("MINTER_PRIVATE_KEY")
 	if privateKeyHex == "" {
 		return nil, fmt.Errorf("MINTER_PRIVATE_KEY env var not set")
 	}
+	// Remove prefixo 0x se existir
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+
 	privateKey, err := crypto.HexToECDSA(privateKeyHex)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid private key: %w", err)
 	}
+
 	publicKey := privateKey.Public()
 	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
 	if !ok {
