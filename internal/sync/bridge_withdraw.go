@@ -26,7 +26,12 @@ func NewBridgeWithdrawWorker(
 	eth *ethereum.Client,
 	bridgeRepo *postgres.BridgeRepository,
 ) *BridgeWithdrawWorker {
-	nknSender := nknclient.NewWallet(os.Getenv("BRIDGE_NKN_PRIVATE_KEY"))
+	// NewWallet retorna (*Wallet, error) – capturamos ambos
+	nknSender, err := nknclient.NewWallet(os.Getenv("BRIDGE_NKN_PRIVATE_KEY"))
+	if err != nil {
+		log.Printf("WARNING: could not create NKN wallet: %v (withdrawals will be skipped)", err)
+		nknSender = nil
+	}
 	return &BridgeWithdrawWorker{
 		db:         db,
 		nknClient:  nkn,
@@ -79,11 +84,17 @@ func (w *BridgeWithdrawWorker) Start(ctx context.Context) {
 			fee := new(big.Int).Div(amount, big.NewInt(1000)) // 0.1%
 			sendAmount := new(big.Int).Sub(amount, fee)
 
+			// Se a carteira NKN não estiver configurada, pula o envio
+			if w.nknSender == nil {
+				log.Printf("WARNING: NKN wallet not available, skipping send for burn tx %s", burnTxHash)
+				_ = w.bridgeRepo.UpdateWithdrawalAfterSend(ctx, burnTxHash, "", "pending_manual")
+				continue
+			}
+
 			// Envia NKN na mainnet
 			mainnetTxHash, err := w.nknSender.SendNKN(event.NknMainnetAddress, sendAmount)
 			if err != nil {
 				log.Printf("failed to send NKN withdrawal: %v", err)
-				// Marca como failed
 				_ = w.bridgeRepo.UpdateWithdrawalAfterSend(ctx, burnTxHash, "", "failed")
 				continue
 			}

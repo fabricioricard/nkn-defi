@@ -2,29 +2,21 @@ package ethereum
 
 import (
 	"context"
-	"log"
-	"math/big"
-
-	"github.com/ethereum/go-ethereum/core/types"
 )
 
-func (c *Client) ListenBurnEvents(ctx context.Context, handler func(from common.Address, amount *big.Int, nknAddress string)) error {
+func (c *Client) ListenBurnEvents(ctx context.Context) (<-chan *WrappedNKNBurnRequested, error) {
 	ch := make(chan *WrappedNKNBurnRequested)
-	sub, err := c.wNKN.WatchBurnRequested(nil, ch, nil, nil)
+	sub, err := c.wNKN.WatchBurnRequested(
+		nil, // opts (nil = default)
+		ch,  // sink
+		nil, // from []common.Address (nil = any)
+	)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer sub.Unsubscribe()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case err := <-sub.Err():
-			log.Printf("subscription error: %v", err)
-			return err
-		case event := <-ch:
-			handler(event.From, event.Amount, event.NknMainnetAddress)
-		}
-	}
+	go func() {
+		defer sub.Unsubscribe()
+		<-ctx.Done()
+	}()
+	return ch, nil
 }

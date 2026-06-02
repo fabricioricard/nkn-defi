@@ -58,7 +58,7 @@ func main() {
 	poolUC := app.NewPoolUsecase(poolRepo, cache, eventBus)
 
 	// ---- Cliente NKN (para workers e API) ----
-	nknClient := nknclient.New(cfg.NKNRPCURL)
+	nknClient := nknclient.NewClient(cfg.NKNRPCURL)
 
 	// ---- Cliente Ethereum (Base) e carregamento do contrato wNKN ----
 	ethClient, err := ethereum.NewClient(cfg.BaseRPCURL)

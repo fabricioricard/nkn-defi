@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"log"
 	"math/big"
 	"os"
@@ -57,24 +58,20 @@ func (w *BridgeDepositWorker) Start(ctx context.Context) {
 				if tx.Amount == nil || tx.Amount.Cmp(big.NewInt(0)) <= 0 {
 					continue
 				}
-				// Extrai o memo (campo de dados da transação NKN)
-				memo := tx.Memo // ajuste conforme a struct real de transação da API NKN
+				memo := tx.Memo
 
-				// Procura depósito pendente com esse memo
 				dep, err := w.bridgeRepo.FindPendingDepositByMemo(ctx, memo)
 				if err != nil || dep == nil {
 					log.Printf("no pending deposit for memo %s: %v", memo, err)
 					continue
 				}
 
-				// Converte o hash da transação mainnet para [32]byte
-				txHashBytes, err := hexToBytes32(tx.Hash)
+				txHashBytes, err := hexStringToBytes32(tx.Hash)
 				if err != nil {
 					log.Printf("invalid tx hash %s: %v", tx.Hash, err)
 					continue
 				}
 
-				// Mint wNKN para o endereço Ethereum do depósito
 				mintTxHash, err := w.ethClient.MintWNKN(
 					common.HexToAddress(dep.EthAddress),
 					tx.Amount,
@@ -85,7 +82,6 @@ func (w *BridgeDepositWorker) Start(ctx context.Context) {
 					continue
 				}
 
-				// Atualiza o depósito no banco
 				err = w.bridgeRepo.UpdateDepositAfterMint(ctx, dep.ID, tx.Hash, mintTxHash, "completed")
 				if err != nil {
 					log.Printf("failed to update deposit %s: %v", dep.ID, err)
@@ -97,15 +93,14 @@ func (w *BridgeDepositWorker) Start(ctx context.Context) {
 	}
 }
 
-// hexToBytes32 converte uma string hexadecimal (com ou sem 0x) para um array de 32 bytes.
-func hexToBytes32(hex string) ([32]byte, error) {
+// hexStringToBytes32 converte uma string hexadecimal (com ou sem 0x) para [32]byte.
+func hexStringToBytes32(hexStr string) ([32]byte, error) {
 	var b [32]byte
-	// remove prefixo "0x" se existir
-	if len(hex) >= 2 && hex[:2] == "0x" {
-		hex = hex[2:]
+	clean := hexStr
+	if len(clean) >= 2 && clean[:2] == "0x" {
+		clean = clean[2:]
 	}
-	// decodifica
-	bytes, err := hex.DecodeString(hex) // precisa import "encoding/hex"
+	bytes, err := hex.DecodeString(clean)
 	if err != nil {
 		return b, err
 	}
