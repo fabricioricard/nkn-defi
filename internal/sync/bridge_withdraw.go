@@ -45,9 +45,14 @@ func (w *BridgeWithdrawWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	// Bloco inicial: busca o último bloco processado salvo, ou 0
-	lastBlock := int64(0) // idealmente você salvaria no banco para não reprocessar tudo
-	log.Println("BridgeWithdrawWorker started, polling for BurnRequested events")
+	// Pega o bloco atual para começar a monitorar daqui em diante
+	currentBlock, err := w.ethClient.BlockNumber(ctx)
+	if err != nil {
+		log.Printf("failed to get initial block: %v", err)
+		currentBlock = 0
+	}
+	lastBlock := int64(currentBlock)
+	log.Printf("BridgeWithdrawWorker started, monitoring from block %d", lastBlock)
 
 	for {
 		select {
@@ -55,14 +60,13 @@ func (w *BridgeWithdrawWorker) Start(ctx context.Context) {
 			log.Println("BridgeWithdrawWorker stopped")
 			return
 		case <-ticker.C:
-			// Obtém o bloco atual
-			currentBlock, err := w.ethClient.BlockNumber(ctx)
+			newBlock, err := w.ethClient.BlockNumber(ctx)
 			if err != nil {
 				log.Printf("failed to get block number: %v", err)
 				continue
 			}
-
-			if int64(currentBlock) > lastBlock {
+			if int64(newBlock) > lastBlock {
+				// Filtra eventos apenas no intervalo (lastBlock, newBlock]
 				events, err := w.ethClient.FilterBurnEvents(ctx, lastBlock)
 				if err != nil {
 					log.Printf("error filtering burn events: %v", err)
@@ -71,8 +75,7 @@ func (w *BridgeWithdrawWorker) Start(ctx context.Context) {
 				for _, event := range events {
 					w.processBurnEvent(ctx, event)
 				}
-				// Atualiza o bloco processado para o próximo (evita reprocessar os mesmos eventos)
-				lastBlock = int64(currentBlock) + 1
+				lastBlock = int64(newBlock) + 1
 			}
 		}
 	}
@@ -80,17 +83,15 @@ func (w *BridgeWithdrawWorker) Start(ctx context.Context) {
 
 func (w *BridgeWithdrawWorker) processBurnEvent(ctx context.Context, event *ethereum.WrappedNKNBurnRequested) {
 	burnTxHash := event.Raw.TxHash.Hex()
-	log.Printf("BurnRequested received: from=%s, amount=%s, nknAddress=%s, tx=%s",
+	log.Printf("BurnRequested: from=%s, amount=%s, nknAddress=%s, tx=%s",
 		event.From.Hex(), event.Amount.String(), event.NknMainnetAddress, burnTxHash)
 
-	// Verifica se já processamos
 	existing, _ := w.bridgeRepo.GetWithdrawalByBurnTxHash(ctx, burnTxHash)
 	if existing != nil {
 		log.Printf("burn tx %s already processed, skipping", burnTxHash)
 		return
 	}
 
-	// Insere retirada como pending
 	err := w.bridgeRepo.InsertWithdrawal(ctx, &postgres.BridgeWithdrawal{
 		ID:          "",
 		BurnTxHash:  burnTxHash,
@@ -104,13 +105,12 @@ func (w *BridgeWithdrawWorker) processBurnEvent(ctx context.Context, event *ethe
 		return
 	}
 
-	// Calcula taxa (0.1%)
 	amount := event.Amount
 	fee := new(big.Int).Div(amount, big.NewInt(1000))
 	sendAmount := new(big.Int).Sub(amount, fee)
 
 	if w.nknSender == nil {
-		log.Printf("WARNING: NKN wallet not available, skipping send for burn tx %s", burnTxHash)
+		log.Printf("NKN wallet not available, skipping send for tx %s", burnTxHash)
 		_ = w.bridgeRepo.UpdateWithdrawalAfterSend(ctx, burnTxHash, "", "pending_manual")
 		return
 	}
@@ -126,6 +126,6 @@ func (w *BridgeWithdrawWorker) processBurnEvent(ctx context.Context, event *ethe
 	if err != nil {
 		log.Printf("failed to update withdrawal: %v", err)
 	} else {
-		log.Printf("Withdrawal completed: sent %s NKN to %s (mainnet tx %s)", sendAmount.String(), event.NknMainnetAddress, mainnetTxHash)
+		log.Printf("Withdrawal completed: sent %s NKN to %s (tx %s)", sendAmount.String(), event.NknMainnetAddress, mainnetTxHash)
 	}
 }
