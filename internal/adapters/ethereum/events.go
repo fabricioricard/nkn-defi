@@ -2,21 +2,27 @@ package ethereum
 
 import (
 	"context"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 )
 
-func (c *Client) ListenBurnEvents(ctx context.Context) (<-chan *WrappedNKNBurnRequested, error) {
-	ch := make(chan *WrappedNKNBurnRequested)
-	sub, err := c.wNKN.WatchBurnRequested(
-		nil, // opts (nil = default)
-		ch,  // sink
-		nil, // from []common.Address (nil = any)
-	)
+// FilterBurnEvents busca eventos BurnRequested emitidos a partir do bloco fromBlock.
+func (c *Client) FilterBurnEvents(ctx context.Context, fromBlock int64) ([]*WrappedNKNBurnRequested, error) {
+	opts := bind.FilterOpts{
+		Start:   uint64(fromBlock),
+		End:     nil, // até o último bloco
+		Context: ctx,
+	}
+	// Assinatura: FilterBurnRequested(opts *bind.FilterOpts, from []common.Address) (Iterator, error)
+	iterator, err := c.wNKN.FilterBurnRequested(&opts, nil)
 	if err != nil {
 		return nil, err
 	}
-	go func() {
-		defer sub.Unsubscribe()
-		<-ctx.Done()
-	}()
-	return ch, nil
+	defer iterator.Close()
+
+	var events []*WrappedNKNBurnRequested
+	for iterator.Next() {
+		events = append(events, iterator.Event)
+	}
+	return events, iterator.Error()
 }

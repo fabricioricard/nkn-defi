@@ -64,3 +64,7 @@ func (c *Client) LoadWNKNContract(address string) error {
 	c.wNKN, err = NewWrappedNKN(contractAddr, c.eth)
 	return err
 }
+
+func (c *Client) BlockNumber(ctx context.Context) (uint64, error) {
+	return c.eth.BlockNumber(ctx)
+}
