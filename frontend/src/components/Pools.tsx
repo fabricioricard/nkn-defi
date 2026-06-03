@@ -17,100 +17,78 @@ interface Pool {
 }
 
 export default function Pools() {
-  const [pools, setPools] = useState<Pool[]>([]);
+  const [pools, setPools] = useState<Pool[] | null>(null);
   const [token0, setToken0] = useState('');
   const [token1, setToken1] = useState('');
   const [feeBps, setFeeBps] = useState(30);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
   const toast = useToast();
 
   const loadPools = async () => {
     setLoading(true);
-    setError('');
     try {
       const data = await api.getPools();
-      setPools(data);
+      setPools(data ?? []);   // nunca permite null
     } catch (e: any) {
-      const msg = e.message || 'Failed to load pools';
-      setError(msg);
-      toast({ title: 'Error', description: msg, status: 'error' });
+      toast({ title: 'Error', description: e.message, status: 'error' });
+      setPools([]);           // fallback vazio
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { loadPools(); }, []);
+  useEffect(() => {
+    loadPools();
+  }, []);
 
-  const handleCreatePool = async () => {
-    if (!token0 || !token1) {
-      toast({ title: 'Preencha os tokens', status: 'warning' });
-      return;
-    }
-    try {
-      await api.createPool(token0, token1, feeBps);
-      toast({ title: 'Pool criada!', status: 'success' });
-      loadPools();
-      setToken0(''); setToken1('');
-    } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, status: 'error' });
-    }
-  };
-
-  const handleAddLiquidity = async (poolId: string, amount0: string, amount1: string) => {
-    if (!amount0 || !amount1) return toast({ title: 'Valores obrigatórios', status: 'warning' });
-    try {
-      await api.addLiquidity(poolId, amount0, amount1);
-      toast({ title: 'Liquidez adicionada', status: 'success' });
-      loadPools();
-    } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, status: 'error' });
-    }
-  };
-
-  const handleSwap = async (poolId: string, tokenIn: string, amountIn: string) => {
-    if (!amountIn) return toast({ title: 'Quantidade obrigatória', status: 'warning' });
-    try {
-      const res = await api.swap(poolId, tokenIn, amountIn);
-      toast({ title: 'Swap executado', description: `Recebido: ${res.amount_out} (fee: ${res.fee})`, status: 'success' });
-      loadPools();
-    } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, status: 'error' });
-    }
-  };
-
-  if (loading) {
+  // Estados de loading / vazio
+  if (loading || pools === null) {
     return (
       <VStack py={10}>
         <Spinner size="xl" color="brand.400" />
-        <Text color="gray.500">Loading pools...</Text>
+        <Text color="gray.400">Loading pools...</Text>
       </VStack>
     );
   }
 
-  if (error) {
+  if (!loading && pools.length === 0) {
     return (
       <VStack py={10}>
-        <Text color="red.400">Failed to load pools: {error}</Text>
-        <Button onClick={loadPools} colorScheme="brand">Retry</Button>
+        <Text color="gray.400">No pools created yet.</Text>
+        <Button onClick={loadPools} colorScheme="brand" size="sm">Refresh</Button>
+        {/* Seção de criação também aparece, pois o usuário pode criar uma nova */}
       </VStack>
     );
   }
 
+  // Renderização segura
   return (
     <VStack spacing={8} align="stretch">
+      {/* Criação de pool */}
       <Heading size="lg" color="brand.400">Create Pool</Heading>
       <HStack bg="gray.800" p={4} borderRadius="lg" border="1px solid" borderColor="brand.700">
         <Input placeholder="Token0" value={token0} onChange={(e) => setToken0(e.target.value)} bg="gray.700" border="none" />
         <Input placeholder="Token1" value={token1} onChange={(e) => setToken1(e.target.value)} bg="gray.700" border="none" />
         <Input type="number" value={feeBps} onChange={(e) => setFeeBps(Number(e.target.value))} bg="gray.700" border="none" w="120px" />
-        <Button onClick={handleCreatePool} colorScheme="brand">Create</Button>
+        <Button onClick={async () => {
+          if (!token0 || !token1) {
+            toast({ title: 'Fill both tokens', status: 'warning' });
+            return;
+          }
+          try {
+            await api.createPool(token0, token1, feeBps);
+            toast({ title: 'Pool created!', status: 'success' });
+            loadPools();
+            setToken0(''); setToken1('');
+          } catch (e: any) {
+            toast({ title: 'Error', description: e.message, status: 'error' });
+          }
+        }} colorScheme="brand">Create</Button>
       </HStack>
 
       <Heading size="lg" color="brand.400">Liquidity Pools</Heading>
-      {pools.length === 0 && <Text color="gray.500">Nenhuma pool criada ainda.</Text>}
       <SimpleGrid columns={[1, 2, 3]} spacing={6}>
-        {pools.map((pool) => (
+        {(pools ?? []).map((pool) => (
           <Card key={pool.id} bg="gray.800" borderColor="brand.700" borderWidth="1px">
             <CardHeader>
               <HStack justify="space-between">
@@ -134,10 +112,17 @@ export default function Pools() {
                 <HStack>
                   <Input placeholder={pool.token0} id={`amount0-${pool.id}`} size="sm" bg="gray.700" />
                   <Input placeholder={pool.token1} id={`amount1-${pool.id}`} size="sm" bg="gray.700" />
-                  <Button size="sm" colorScheme="brand" onClick={() => {
+                  <Button size="sm" colorScheme="brand" onClick={async () => {
                     const a0 = (document.getElementById(`amount0-${pool.id}`) as HTMLInputElement)?.value;
                     const a1 = (document.getElementById(`amount1-${pool.id}`) as HTMLInputElement)?.value;
-                    handleAddLiquidity(pool.id, a0 || '', a1 || '');
+                    if (!a0 || !a1) return toast({ title: 'Enter both amounts', status: 'warning' });
+                    try {
+                      await api.addLiquidity(pool.id, a0, a1);
+                      toast({ title: 'Liquidity added', status: 'success' });
+                      loadPools();
+                    } catch (e: any) {
+                      toast({ title: 'Error', description: e.message, status: 'error' });
+                    }
                   }}>+</Button>
                 </HStack>
 
@@ -148,10 +133,17 @@ export default function Pools() {
                     <option>{pool.token0}</option>
                     <option>{pool.token1}</option>
                   </Select>
-                  <Button size="sm" colorScheme="brand" variant="outline" onClick={() => {
+                  <Button size="sm" colorScheme="brand" variant="outline" onClick={async () => {
                     const amountIn = (document.getElementById(`swapIn-${pool.id}`) as HTMLInputElement)?.value;
                     const tokenIn = (document.getElementById(`tokenIn-${pool.id}`) as HTMLSelectElement)?.value;
-                    handleSwap(pool.id, tokenIn || pool.token0, amountIn || '');
+                    if (!amountIn) return toast({ title: 'Enter amount', status: 'warning' });
+                    try {
+                      const res = await api.swap(pool.id, tokenIn || pool.token0, amountIn);
+                      toast({ title: 'Swap executed', description: `Received: ${res.amount_out} (fee: ${res.fee})`, status: 'success' });
+                      loadPools();
+                    } catch (e: any) {
+                      toast({ title: 'Error', description: e.message, status: 'error' });
+                    }
                   }}>Swap</Button>
                 </HStack>
               </VStack>
