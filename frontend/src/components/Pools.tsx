@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   VStack, Heading, Input, Button, HStack, Text,
   SimpleGrid, Card, CardHeader, CardBody, Badge,
-  useToast, Select,
+  useToast, Select, Spinner,
 } from '@chakra-ui/react';
 import { api } from '../api';
 
@@ -21,14 +21,22 @@ export default function Pools() {
   const [token0, setToken0] = useState('');
   const [token1, setToken1] = useState('');
   const [feeBps, setFeeBps] = useState(30);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const toast = useToast();
 
   const loadPools = async () => {
+    setLoading(true);
+    setError('');
     try {
       const data = await api.getPools();
       setPools(data);
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      const msg = e.message || 'Failed to load pools';
+      setError(msg);
+      toast({ title: 'Error', description: msg, status: 'error' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -70,6 +78,24 @@ export default function Pools() {
       toast({ title: 'Erro', description: e.message, status: 'error' });
     }
   };
+
+  if (loading) {
+    return (
+      <VStack py={10}>
+        <Spinner size="xl" color="brand.400" />
+        <Text color="gray.500">Loading pools...</Text>
+      </VStack>
+    );
+  }
+
+  if (error) {
+    return (
+      <VStack py={10}>
+        <Text color="red.400">Failed to load pools: {error}</Text>
+        <Button onClick={loadPools} colorScheme="brand">Retry</Button>
+      </VStack>
+    );
+  }
 
   return (
     <VStack spacing={8} align="stretch">

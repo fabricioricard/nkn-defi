@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
+import Home from './components/Home';
 import Bridge from './components/Bridge';
 import Swap from './components/Swap';
 import Pools from './components/Pools';
@@ -10,7 +11,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<Bridge />} />
+          <Route path="/" element={<Home />} />
           <Route path="/bridge" element={<Bridge />} />
           <Route path="/swap" element={<Swap />} />
           <Route path="/pools" element={<Pools />} />

@@ -2,13 +2,13 @@ import { Outlet, NavLink } from 'react-router-dom';
 import {
   Box, Flex, Button, HStack, Icon, Text,
 } from '@chakra-ui/react';
-import { FaLink, FaExchangeAlt, FaChartPie, FaTint, FaWallet } from 'react-icons/fa';
+import { FaLink, FaExchangeAlt, FaChartPie, FaCubes, FaWallet } from 'react-icons/fa';
 import { useAccount, useConnect, useDisconnect } from 'wagmi';
 
 const links = [
   { to: '/bridge', label: 'Bridge', icon: FaLink },
   { to: '/swap', label: 'Swap', icon: FaExchangeAlt },
-  { to: '/pools', label: 'Pools', icon: FaTint },
+  { to: '/pools', label: 'Pools', icon: FaCubes },
   { to: '/portfolio', label: 'Portfolio', icon: FaChartPie },
 ];
 
@@ -16,6 +16,15 @@ export default function Layout() {
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
+
+  const handleConnect = () => {
+    if (connectors.length === 1) {
+      connect({ connector: connectors[0] });
+    } else {
+      // abre o seletor de carteira padrão do navegador
+      connect({ connector: connectors[0] });
+    }
+  };
 
   return (
     <Box minH="100vh" bg="gray.900">
@@ -29,7 +38,7 @@ export default function Layout() {
         borderColor="brand.700"
       >
         <HStack spacing={4}>
-          <Icon as={FaTint} boxSize={6} color="brand.400" />
+          <Icon as={FaCubes} boxSize={6} color="brand.400" />
           <NavLink to="/" style={{ fontWeight: 'bold', fontSize: '1.2rem', color: '#a78bfa' }}>
             NKN DeFi · InfraFi
           </NavLink>
@@ -68,7 +77,7 @@ export default function Layout() {
               size="sm"
               colorScheme="brand"
               leftIcon={<Icon as={FaWallet} />}
-              onClick={() => connect({ connector: connectors[0] })}
+              onClick={handleConnect}
             >
               Connect Wallet
             </Button>

@@ -1,10 +1,10 @@
 import { http, createConfig } from 'wagmi'
 import { base, baseSepolia } from 'wagmi/chains'
-import { metaMask } from 'wagmi/connectors'
+import { injected, metaMask } from 'wagmi/connectors'
 
 export const config = createConfig({
-  chains: [base, baseSepolia],   // Base mainnet e testnet
-  connectors: [metaMask()],
+  chains: [base, baseSepolia],
+  connectors: [injected(), metaMask()],
   transports: {
     [base.id]: http(),
     [baseSepolia.id]: http(),
