@@ -31,9 +31,11 @@ export default function Bridge() {
     }
     try {
       const data = await api.getBridgeTransactions(address);
-      setTxs(data);
+      // Garante que data é um array; caso contrário, usa []
+      setTxs(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
+      setTxs([]);
     }
   };
 
@@ -122,7 +124,7 @@ export default function Bridge() {
           </Tr>
         </Thead>
         <Tbody>
-          {txs.map((tx) => (
+          {(Array.isArray(txs) ? txs : []).map((tx) => (
             <Tr key={tx.id}>
               <Td>{tx.type}</Td>
               <Td>{tx.amount} NKN</Td>

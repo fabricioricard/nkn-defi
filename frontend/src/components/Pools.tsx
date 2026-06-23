@@ -25,17 +25,17 @@ export default function Pools() {
   const toast = useToast();
 
   const loadPools = async () => {
-    setLoading(true);
-    try {
-      const data = await api.getPools();
-      setPools(data ?? []);
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, status: 'error' });
-      setPools([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+  setLoading(true);
+  try {
+    const data = await api.getPools();
+    setPools(Array.isArray(data) ? data : []);
+  } catch (e: any) {
+    toast({ title: 'Error', description: e.message, status: 'error' });
+    setPools([]);
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => { loadPools(); }, []);
 
