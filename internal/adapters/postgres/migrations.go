@@ -3,12 +3,12 @@ package postgres
 import "database/sql"
 
 func RunMigrations(db *sql.DB) error {
-	// Garantir que a extensão uuid-ossp esteja disponível (para gerar UUIDs automaticamente)
+	// Garantir que a extensão uuid-ossp esteja disponível
 	if _, err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`); err != nil {
 		return err
 	}
 
-	// Tabela de pools (já existente)
+	// Tabela de pools
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS pools (
 			id UUID PRIMARY KEY,
@@ -26,7 +26,7 @@ func RunMigrations(db *sql.DB) error {
 		return err
 	}
 
-	// Tabela de depósitos da Bridge (NKN mainnet → wNKN)
+	// Tabela de depósitos da Bridge
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS bridge_deposits (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -36,6 +36,7 @@ func RunMigrations(db *sql.DB) error {
 			status TEXT DEFAULT 'pending',
 			mainnet_tx_hash TEXT,
 			mint_tx_hash TEXT,
+			memo TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		);
@@ -43,7 +44,12 @@ func RunMigrations(db *sql.DB) error {
 		return err
 	}
 
-	// Tabela de retiradas da Bridge (wNKN → NKN mainnet)
+	// Garantir que a coluna memo exista (para tabelas criadas antes desta migração)
+	if _, err := db.Exec(`ALTER TABLE bridge_deposits ADD COLUMN IF NOT EXISTS memo TEXT NOT NULL DEFAULT '';`); err != nil {
+		return err
+	}
+
+	// Tabela de retiradas da Bridge
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS bridge_withdrawals (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
