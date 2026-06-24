@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -51,8 +52,42 @@ func NewRouter(
 		r.Get("/bridge/transactions", rt.getBridgeTransactions)
 	})
 
-	r.Handle("/*", http.FileServer(http.FS(frontendFS)))
+	// Serve o frontend React (Single Page Application)
+	r.Handle("/*", spaHandler(frontendFS))
 	return r
+}
+
+// spaHandler serve o index.html para qualquer rota que não corresponda a um arquivo estático.
+func spaHandler(fsys fs.FS) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+
+		f, err := fsys.Open(path)
+		if err != nil {
+			serveIndex(fsys, w)
+			return
+		}
+		defer f.Close()
+
+		stat, err := f.Stat()
+		if err != nil || stat.IsDir() {
+			serveIndex(fsys, w)
+			return
+		}
+
+		http.FileServer(http.FS(fsys)).ServeHTTP(w, r)
+	}
+}
+
+// serveIndex lê o index.html do sistema de arquivos e o escreve na resposta.
+func serveIndex(fsys fs.FS, w http.ResponseWriter) {
+	data, err := fs.ReadFile(fsys, "index.html")
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(data)
 }
 
 // createBridgeDeposit cria um novo pedido de depósito.
@@ -78,12 +113,12 @@ func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dep := &postgres.BridgeDeposit{
-		ID:               depositID,
-		EthAddress:       req.EthAddress,
-		Amount:           req.Amount,
+		ID:                depositID,
+		EthAddress:        req.EthAddress,
+		Amount:            req.Amount,
 		NknDepositAddress: nknAddress,
-		Status:           "pending",
-		Memo:             depositID, // o próprio ID serve como memo
+		Status:            "pending",
+		Memo:              depositID, // o próprio ID serve como memo
 	}
 
 	if err := rt.bridgeRepo.InsertDeposit(r.Context(), dep); err != nil {
