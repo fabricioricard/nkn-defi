@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/fabricioricard/nkn-defi/internal/adapters/nknclient"
 	"github.com/fabricioricard/nkn-defi/internal/adapters/postgres"
 	"github.com/fabricioricard/nkn-defi/internal/app"
 )
@@ -90,7 +91,7 @@ func serveIndex(fsys fs.FS, w http.ResponseWriter) {
 	w.Write(data)
 }
 
-// createBridgeDeposit cria um novo pedido de depósito.
+// createBridgeDeposit cria um novo pedido de depósito com endereço NKN único.
 func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EthAddress string `json:"eth_address"`
@@ -105,20 +106,39 @@ func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	depositID := uuid.New().String()
-	nknAddress := os.Getenv("BRIDGE_NKN_ADDRESS") // endereço fixo da carteira custodiada
-	if nknAddress == "" {
-		http.Error(w, "bridge NKN address not configured", http.StatusInternalServerError)
+	// Obtém a chave privada da carteira NKN principal
+	privateKey := os.Getenv("BRIDGE_NKN_PRIVATE_KEY")
+	if privateKey == "" {
+		rt.logg.Error("BRIDGE_NKN_PRIVATE_KEY not set")
+		http.Error(w, "bridge not configured", http.StatusInternalServerError)
 		return
 	}
 
+	wallet, err := nknclient.NewWallet(privateKey)
+	if err != nil {
+		rt.logg.Error("failed to create NKN wallet", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Gera um endereço único derivado do timestamp (índice)
+	index := uint32(time.Now().UnixMilli())
+	derivedAddr, err := wallet.DeriveAddress(index)
+	if err != nil {
+		rt.logg.Error("failed to derive NKN address", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	depositID := uuid.New().String()
 	dep := &postgres.BridgeDeposit{
 		ID:                depositID,
 		EthAddress:        req.EthAddress,
 		Amount:            req.Amount,
-		NknDepositAddress: nknAddress,
+		NknDepositAddress: derivedAddr, // endereço único gerado
 		Status:            "pending",
-		Memo:              depositID, // o próprio ID serve como memo
+		Memo:              depositID,   // mantido internamente para rastreabilidade
+		NknDerivedIndex:   int64(index),
 	}
 
 	if err := rt.bridgeRepo.InsertDeposit(r.Context(), dep); err != nil {
@@ -129,8 +149,8 @@ func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]string{
 		"deposit_id":      depositID,
-		"deposit_address": nknAddress,
-		"memo":            depositID,
+		"deposit_address": derivedAddr,
+		"memo":            "", // memo não é mais necessário para o usuário
 		"expires_at":      time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 	}
 

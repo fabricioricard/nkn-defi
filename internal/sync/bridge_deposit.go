@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"log"
 	"math/big"
-	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -16,11 +15,10 @@ import (
 )
 
 type BridgeDepositWorker struct {
-	db          *sql.DB
-	nknClient   *nknclient.Client
-	ethClient   *ethereum.Client
-	depositAddr string
-	bridgeRepo  *postgres.BridgeRepository
+	db         *sql.DB
+	nknClient  *nknclient.Client
+	ethClient  *ethereum.Client
+	bridgeRepo *postgres.BridgeRepository
 }
 
 func NewBridgeDepositWorker(
@@ -30,18 +28,17 @@ func NewBridgeDepositWorker(
 	bridgeRepo *postgres.BridgeRepository,
 ) *BridgeDepositWorker {
 	return &BridgeDepositWorker{
-		db:          db,
-		nknClient:   nkn,
-		ethClient:   eth,
-		depositAddr: os.Getenv("BRIDGE_NKN_ADDRESS"),
-		bridgeRepo:  bridgeRepo,
+		db:         db,
+		nknClient:  nkn,
+		ethClient:  eth,
+		bridgeRepo: bridgeRepo,
 	}
 }
 
 func (w *BridgeDepositWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	log.Printf("BridgeDepositWorker started, watching address %s", w.depositAddr)
+	log.Println("BridgeDepositWorker started (monitoring pending deposits)")
 
 	for {
 		select {
@@ -49,44 +46,50 @@ func (w *BridgeDepositWorker) Start(ctx context.Context) {
 			log.Println("BridgeDepositWorker stopped")
 			return
 		case <-ticker.C:
-			txs, err := w.nknClient.GetRecentTransactions(w.depositAddr)
+			// Lista todos os depósitos pendentes (com endereço único)
+			deposits, err := w.bridgeRepo.ListPendingDeposits(ctx)
 			if err != nil {
-				log.Printf("error fetching NKN txs: %v", err)
+				log.Printf("error listing pending deposits: %v", err)
 				continue
 			}
-			for _, tx := range txs {
-				if tx.Amount == nil || tx.Amount.Cmp(big.NewInt(0)) <= 0 {
-					continue
-				}
-				memo := tx.Memo
-
-				dep, err := w.bridgeRepo.FindPendingDepositByMemo(ctx, memo)
-				if err != nil || dep == nil {
-					log.Printf("no pending deposit for memo %s: %v", memo, err)
-					continue
-				}
-
-				txHashBytes, err := hexStringToBytes32(tx.Hash)
+			for _, dep := range deposits {
+				log.Printf("checking deposit %s at address %s", dep.ID, dep.NknDepositAddress)
+				txs, err := w.nknClient.GetRecentTransactions(dep.NknDepositAddress)
 				if err != nil {
-					log.Printf("invalid tx hash %s: %v", tx.Hash, err)
+					log.Printf("error fetching txs for %s: %v", dep.NknDepositAddress, err)
 					continue
 				}
+				for _, tx := range txs {
+					if tx.Amount == nil || tx.Amount.Cmp(big.NewInt(0)) <= 0 {
+						continue
+					}
+					// Verifica se a transação corresponde ao valor esperado (opcional)
+					// Aqui confiamos que qualquer transação recebida no endereço único pertence ao depósito.
 
-				mintTxHash, err := w.ethClient.MintWNKN(
-					common.HexToAddress(dep.EthAddress),
-					tx.Amount,
-					txHashBytes,
-				)
-				if err != nil {
-					log.Printf("failed to mint wNKN for deposit %s: %v", dep.ID, err)
-					continue
-				}
+					txHashBytes, err := hexStringToBytes32(tx.Hash)
+					if err != nil {
+						log.Printf("invalid tx hash %s: %v", tx.Hash, err)
+						continue
+					}
 
-				err = w.bridgeRepo.UpdateDepositAfterMint(ctx, dep.ID, tx.Hash, mintTxHash, "completed")
-				if err != nil {
-					log.Printf("failed to update deposit %s: %v", dep.ID, err)
-				} else {
-					log.Printf("Minted %s wNKN to %s (deposit %s, mint tx %s)", tx.Amount.String(), dep.EthAddress, dep.ID, mintTxHash)
+					mintTxHash, err := w.ethClient.MintWNKN(
+						common.HexToAddress(dep.EthAddress),
+						tx.Amount,
+						txHashBytes,
+					)
+					if err != nil {
+						log.Printf("failed to mint wNKN for deposit %s: %v", dep.ID, err)
+						continue
+					}
+
+					err = w.bridgeRepo.UpdateDepositAfterMint(ctx, dep.ID, tx.Hash, mintTxHash, "completed")
+					if err != nil {
+						log.Printf("failed to update deposit %s: %v", dep.ID, err)
+					} else {
+						log.Printf("Minted %s wNKN to %s (deposit %s, mint tx %s)", tx.Amount.String(), dep.EthAddress, dep.ID, mintTxHash)
+					}
+					// Após processar a primeira transação válida, sai do loop para evitar mint duplicado.
+					break
 				}
 			}
 		}

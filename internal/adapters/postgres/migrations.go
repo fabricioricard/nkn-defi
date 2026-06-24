@@ -3,7 +3,7 @@ package postgres
 import "database/sql"
 
 func RunMigrations(db *sql.DB) error {
-	// Garantir que a extensão uuid-ossp esteja disponível
+	// Extensão UUID
 	if _, err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`); err != nil {
 		return err
 	}
@@ -37,6 +37,7 @@ func RunMigrations(db *sql.DB) error {
 			mainnet_tx_hash TEXT,
 			mint_tx_hash TEXT,
 			memo TEXT NOT NULL DEFAULT '',
+			nkn_derived_index BIGINT DEFAULT 0,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		);
@@ -44,8 +45,11 @@ func RunMigrations(db *sql.DB) error {
 		return err
 	}
 
-	// Garantir que a coluna memo exista (para tabelas criadas antes desta migração)
+	// Adicionar colunas que podem estar ausentes em versões anteriores
 	if _, err := db.Exec(`ALTER TABLE bridge_deposits ADD COLUMN IF NOT EXISTS memo TEXT NOT NULL DEFAULT '';`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`ALTER TABLE bridge_deposits ADD COLUMN IF NOT EXISTS nkn_derived_index BIGINT DEFAULT 0;`); err != nil {
 		return err
 	}
 

@@ -8,6 +8,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.12.3
+	github.com/nknorg/nkn-sdk-go v1.4.8
 	go.uber.org/zap v1.28.0
 )
 
@@ -35,7 +36,6 @@ require (
 	github.com/imdario/mergo v0.3.13 // indirect
 	github.com/itchyny/base58-go v0.0.5 // indirect
 	github.com/nknorg/ncp-go v1.0.5 // indirect
-	github.com/nknorg/nkn-sdk-go v1.4.8 // indirect
 	github.com/nknorg/nkn/v2 v2.2.1-0.20240509224846-24ade56074a3 // indirect
 	github.com/nknorg/nkngomobile v0.0.0-20220615081414-671ad1afdfa9 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
