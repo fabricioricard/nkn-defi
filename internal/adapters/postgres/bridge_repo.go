@@ -106,6 +106,12 @@ func (r *BridgeRepository) UpdateDepositAfterMint(ctx context.Context, id, mainn
 	return err
 }
 
+// DeleteDeposit remove um depósito pendente pelo ID.
+func (r *BridgeRepository) DeleteDeposit(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM bridge_deposits WHERE id = $1 AND status = 'pending'`, id)
+	return err
+}
+
 // InsertWithdrawal insere uma nova retirada.
 func (r *BridgeRepository) InsertWithdrawal(ctx context.Context, w *BridgeWithdrawal) error {
 	if w.ID == "" {

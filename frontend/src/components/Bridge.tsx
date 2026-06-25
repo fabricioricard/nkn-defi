@@ -4,7 +4,7 @@ import {
   Table, Thead, Tbody, Tr, Th, Td, Badge, useToast,
   HStack, Icon,
 } from '@chakra-ui/react';
-import { FaWallet, FaCheckCircle } from 'react-icons/fa';
+import { FaWallet, FaCheckCircle, FaTimes } from 'react-icons/fa';
 import { useAccount } from 'wagmi';
 import { api } from '../api';
 
@@ -31,7 +31,6 @@ export default function Bridge() {
     }
     try {
       const data = await api.getBridgeTransactions(address);
-      // Garante que data é um array; caso contrário, usa []
       setTxs(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
@@ -42,6 +41,16 @@ export default function Bridge() {
   useEffect(() => {
     loadTxs();
   }, [address]);
+
+  const handleCancel = async (id: string) => {
+    try {
+      await api.cancelDeposit(id);
+      toast({ title: 'Deposit cancelled', status: 'info' });
+      loadTxs();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, status: 'error' });
+    }
+  };
 
   const handleBridge = async () => {
     if (!address) {
@@ -121,6 +130,7 @@ export default function Bridge() {
             <Th>Amount</Th>
             <Th>Status</Th>
             <Th>Time</Th>
+            <Th></Th>   {/* coluna extra para o botão de ação */}
           </Tr>
         </Thead>
         <Tbody>
@@ -134,6 +144,19 @@ export default function Bridge() {
                 </Badge>
               </Td>
               <Td>{new Date(tx.timestamp).toLocaleTimeString()}</Td>
+              <Td>
+                {tx.status === 'pending' && tx.type === 'deposit' && (
+                  <Button
+                    size="xs"
+                    colorScheme="red"
+                    variant="ghost"
+                    leftIcon={<FaTimes />}
+                    onClick={() => handleCancel(tx.id)}
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </Td>
             </Tr>
           ))}
         </Tbody>

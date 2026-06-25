@@ -20,6 +20,11 @@ export const api = {
   getBridgeTransactions: (ethAddress: string) =>
     fetchJSON(`/bridge/transactions?eth_address=${encodeURIComponent(ethAddress)}`),
 
+  cancelDeposit: (id: string) =>
+    fetchJSON(`/bridge/deposit/${id}`, {
+      method: 'DELETE',
+    }),
+
   // Pools
   getPools: () => fetchJSON('/pools'),
   createPool: (token0: string, token1: string, fee_bps: number) =>

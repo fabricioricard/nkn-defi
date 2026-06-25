@@ -51,6 +51,7 @@ func NewRouter(
 		// Bridge (implementação real)
 		r.Post("/bridge/deposit", rt.createBridgeDeposit)
 		r.Get("/bridge/transactions", rt.getBridgeTransactions)
+		r.Delete("/bridge/deposit/{id}", rt.cancelBridgeDeposit) // ← nova rota
 	})
 
 	// Serve o frontend React (Single Page Application)
@@ -156,6 +157,17 @@ func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// cancelBridgeDeposit cancela um depósito pendente.
+func (rt *Router) cancelBridgeDeposit(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := rt.bridgeRepo.DeleteDeposit(r.Context(), id); err != nil {
+		rt.logg.Error("failed to delete deposit", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // getBridgeTransactions retorna as últimas transações do usuário.
