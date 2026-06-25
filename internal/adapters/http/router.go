@@ -167,7 +167,8 @@ func (rt *Router) cancelBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 }
 
 // getBridgeTransactions retorna as últimas transações do usuário.
