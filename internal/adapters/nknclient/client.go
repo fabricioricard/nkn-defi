@@ -1,6 +1,8 @@
 ﻿package nknclient
 
 import (
+	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,16 +12,30 @@ import (
 )
 
 type Client struct {
-	baseURL string
+	rpcAddrs []string
 }
 
 func NewClient(baseURL string) *Client {
-	// Mantém a URL exata, removendo apenas barra final
-	url := strings.TrimRight(baseURL, "/")
-	if url == "" {
-		url = "https://mainnet-rpc-node-0001.nkn.org/mainnet/api/wallet"
+	// Lista de nós RPC públicos (porta 30003) com fallback
+	defaultAddrs := []string{
+		"http://seed.nkn.org:30003",
+		"http://mainnet-seed-0001.nkn.org:30003",
+		"http://mainnet-seed-0002.nkn.org:30003",
+		"http://mainnet-seed-0003.nkn.org:30003",
+		"http://mainnet-seed-0004.nkn.org:30003",
 	}
-	return &Client{baseURL: url}
+
+	// Se uma URL específica foi fornecida, coloca no início
+	if baseURL != "" {
+		addr := strings.TrimSpace(baseURL)
+		addr = strings.TrimRight(addr, "/")
+		if !strings.HasPrefix(addr, "http") {
+			addr = "http://" + addr
+		}
+		defaultAddrs = append([]string{addr}, defaultAddrs...)
+	}
+
+	return &Client{rpcAddrs: defaultAddrs}
 }
 
 type Transaction struct {
@@ -29,45 +45,122 @@ type Transaction struct {
 	To     string
 }
 
-// GetRecentTransactions obtém as últimas transações de um endereço via API REST (GET).
+// GetRecentTransactions tenta cada nó RPC até obter sucesso.
 func (c *Client) GetRecentTransactions(address string) ([]Transaction, error) {
-	url := fmt.Sprintf("%s/transactions?address=%s&limit=20", c.baseURL, address)
-	resp, err := http.Get(url)
+	var lastErr error
+	for _, rpcAddr := range c.rpcAddrs {
+		txs, err := c.fetchFromRPC(rpcAddr, address)
+		if err == nil {
+			return txs, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("all RPC nodes failed: %v", lastErr)
+}
+
+func (c *Client) fetchFromRPC(rpcAddr, address string) ([]Transaction, error) {
+	payload := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "getaddresstransactions",
+		"params":  []interface{}{address},
+		"id":      1,
+	}
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("GET transactions: %w", err)
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
+
+	resp, err := http.Post(rpcAddr, "application/json", bytes.NewReader(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("POST RPC: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
-	// Estrutura da resposta real (conforme você observou)
-	var apiResp struct {
-		Data struct {
-			List []struct {
-				Hash      string `json:"Hash"`
-				FromAddr  string `json:"FromAddr"`
-				ToAddr    string `json:"ToAddr"`
-				Value     string `json:"Value"`
-				Fee       string `json:"Fee"`
-				Timestamp string `json:"Timestamp"`
-			} `json:"list"`
-		} `json:"Data"`
+	var rpcResp struct {
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("parse transactions: %w", err)
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		return nil, fmt.Errorf("parse RPC response: %w", err)
+	}
+	if rpcResp.Error != nil {
+		return nil, fmt.Errorf("RPC error: %s", rpcResp.Error.Message)
+	}
+
+	// Aceita lista direta ou envelopada em "data"
+	var txsRaw []struct {
+		Hash   string `json:"hash"`
+		Value  string `json:"value"`
+		Data   string `json:"data"`
+		Txid   string `json:"txid"`
+		Amount string `json:"amount"`
+		From   string `json:"from"`
+		To     string `json:"to"`
+	}
+
+	// Tenta primeiro como array
+	if err := json.Unmarshal(rpcResp.Result, &txsRaw); err != nil {
+		// Tenta como objeto com campo "data"
+		var envelop struct {
+			Data []struct {
+				Hash   string `json:"hash"`
+				Value  string `json:"value"`
+				Txid   string `json:"txid"`
+				Amount string `json:"amount"`
+				From   string `json:"from"`
+				To     string `json:"to"`
+			} `json:"data"`
+		}
+		if err2 := json.Unmarshal(rpcResp.Result, &envelop); err2 != nil {
+			return nil, fmt.Errorf("parse transactions result: %w", err2)
+		}
+		for _, t := range envelop.Data {
+			txsRaw = append(txsRaw, struct {
+				Hash   string `json:"hash"`
+				Value  string `json:"value"`
+				Data   string `json:"data"`
+				Txid   string `json:"txid"`
+				Amount string `json:"amount"`
+				From   string `json:"from"`
+				To     string `json:"to"`
+			}{t.Hash, t.Value, "", t.Txid, t.Amount, t.From, t.To})
+		}
 	}
 
 	var txs []Transaction
-	for _, t := range apiResp.Data.List {
-		amt, ok := new(big.Int).SetString(t.Value, 10)
+	for _, t := range txsRaw {
+		amountStr := t.Value
+		if amountStr == "" {
+			amountStr = t.Amount
+		}
+		amt, ok := new(big.Int).SetString(amountStr, 10)
 		if !ok {
 			continue
 		}
+		hash := t.Hash
+		if hash == "" {
+			hash = t.Txid
+		}
 		txs = append(txs, Transaction{
-			Hash:   t.Hash,
+			Hash:   hash,
 			Amount: amt,
-			From:   t.FromAddr,
-			To:     t.ToAddr,
+			From:   t.From,
+			To:     t.To,
 		})
 	}
 	return txs, nil
+}
+
+func hexDecode(s string) (string, error) {
+	if len(s) < 2 || s[:2] != "0x" {
+		return "", fmt.Errorf("not hex")
+	}
+	b, err := hex.DecodeString(s[2:])
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
