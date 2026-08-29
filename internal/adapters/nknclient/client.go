@@ -2,7 +2,6 @@
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,65 +11,34 @@ import (
 )
 
 type Client struct {
-	rpcAddrs []string
+	rpcURL string
 }
 
 func NewClient(baseURL string) *Client {
-	// Lista de nós RPC públicos (porta 30003) com fallback
-	defaultAddrs := []string{
-		"http://seed.nkn.org:30003",
-		"http://mainnet-seed-0001.nkn.org:30003",
-		"http://mainnet-seed-0002.nkn.org:30003",
-		"http://mainnet-seed-0003.nkn.org:30003",
-		"http://mainnet-seed-0004.nkn.org:30003",
+	// Endpoint JSON-RPC do explorer oficial
+	url := strings.TrimSpace(baseURL)
+	if url == "" {
+		url = "https://explorer.nkn.org/api"
 	}
-
-	// Se uma URL específica foi fornecida, coloca no início
-	if baseURL != "" {
-		addr := strings.TrimSpace(baseURL)
-		addr = strings.TrimRight(addr, "/")
-		if !strings.HasPrefix(addr, "http") {
-			addr = "http://" + addr
-		}
-		defaultAddrs = append([]string{addr}, defaultAddrs...)
-	}
-
-	return &Client{rpcAddrs: defaultAddrs}
+	return &Client{rpcURL: url}
 }
 
-type Transaction struct {
-	Hash   string
-	Amount *big.Int
-	From   string
-	To     string
-}
-
-// GetRecentTransactions tenta cada nó RPC até obter sucesso.
-func (c *Client) GetRecentTransactions(address string) ([]Transaction, error) {
-	var lastErr error
-	for _, rpcAddr := range c.rpcAddrs {
-		txs, err := c.fetchFromRPC(rpcAddr, address)
-		if err == nil {
-			return txs, nil
-		}
-		lastErr = err
-	}
-	return nil, fmt.Errorf("all RPC nodes failed: %v", lastErr)
-}
-
-func (c *Client) fetchFromRPC(rpcAddr, address string) ([]Transaction, error) {
+// GetAddressBalance consulta o saldo de um endereço usando o método nativo getbalancebyaddr.
+func (c *Client) GetAddressBalance(address string) (*big.Int, error) {
 	payload := map[string]interface{}{
 		"jsonrpc": "2.0",
-		"method":  "getaddresstransactions",
-		"params":  []interface{}{address},
-		"id":      1,
+		"method":  "getbalancebyaddr",
+		"params": map[string]interface{}{
+			"address": address,
+		},
+		"id": 1,
 	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal payload: %w", err)
 	}
 
-	resp, err := http.Post(rpcAddr, "application/json", bytes.NewReader(jsonData))
+	resp, err := http.Post(c.rpcURL, "application/json", bytes.NewReader(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("POST RPC: %w", err)
 	}
@@ -90,77 +58,31 @@ func (c *Client) fetchFromRPC(rpcAddr, address string) ([]Transaction, error) {
 		return nil, fmt.Errorf("RPC error: %s", rpcResp.Error.Message)
 	}
 
-	// Aceita lista direta ou envelopada em "data"
-	var txsRaw []struct {
-		Hash   string `json:"hash"`
-		Value  string `json:"value"`
-		Data   string `json:"data"`
-		Txid   string `json:"txid"`
-		Amount string `json:"amount"`
-		From   string `json:"from"`
-		To     string `json:"to"`
+	// O resultado pode ser string ou número
+	var balanceStr string
+	if err := json.Unmarshal(rpcResp.Result, &balanceStr); err != nil {
+		var balanceNum json.Number
+		if err2 := json.Unmarshal(rpcResp.Result, &balanceNum); err2 != nil {
+			return nil, fmt.Errorf("parse balance result: %w", err2)
+		}
+		balanceStr = balanceNum.String()
 	}
 
-	// Tenta primeiro como array
-	if err := json.Unmarshal(rpcResp.Result, &txsRaw); err != nil {
-		// Tenta como objeto com campo "data"
-		var envelop struct {
-			Data []struct {
-				Hash   string `json:"hash"`
-				Value  string `json:"value"`
-				Txid   string `json:"txid"`
-				Amount string `json:"amount"`
-				From   string `json:"from"`
-				To     string `json:"to"`
-			} `json:"data"`
-		}
-		if err2 := json.Unmarshal(rpcResp.Result, &envelop); err2 != nil {
-			return nil, fmt.Errorf("parse transactions result: %w", err2)
-		}
-		for _, t := range envelop.Data {
-			txsRaw = append(txsRaw, struct {
-				Hash   string `json:"hash"`
-				Value  string `json:"value"`
-				Data   string `json:"data"`
-				Txid   string `json:"txid"`
-				Amount string `json:"amount"`
-				From   string `json:"from"`
-				To     string `json:"to"`
-			}{t.Hash, t.Value, "", t.Txid, t.Amount, t.From, t.To})
-		}
+	balance, ok := new(big.Int).SetString(balanceStr, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid balance: %s", balanceStr)
 	}
-
-	var txs []Transaction
-	for _, t := range txsRaw {
-		amountStr := t.Value
-		if amountStr == "" {
-			amountStr = t.Amount
-		}
-		amt, ok := new(big.Int).SetString(amountStr, 10)
-		if !ok {
-			continue
-		}
-		hash := t.Hash
-		if hash == "" {
-			hash = t.Txid
-		}
-		txs = append(txs, Transaction{
-			Hash:   hash,
-			Amount: amt,
-			From:   t.From,
-			To:     t.To,
-		})
-	}
-	return txs, nil
+	return balance, nil
 }
 
-func hexDecode(s string) (string, error) {
-	if len(s) < 2 || s[:2] != "0x" {
-		return "", fmt.Errorf("not hex")
-	}
-	b, err := hex.DecodeString(s[2:])
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+// GetRecentTransactions mantida para compatibilidade, mas retorna erro (não suportado por nós RPC).
+func (c *Client) GetRecentTransactions(address string) ([]Transaction, error) {
+	return nil, fmt.Errorf("not implemented: use balance polling")
+}
+
+type Transaction struct {
+	Hash   string
+	Amount *big.Int
+	From   string
+	To     string
 }
