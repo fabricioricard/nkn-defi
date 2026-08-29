@@ -1,7 +1,6 @@
 ﻿package nknclient
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,71 +10,64 @@ import (
 )
 
 type Client struct {
-	rpcURL string
+	baseURL string
 }
 
 func NewClient(baseURL string) *Client {
-	url := strings.TrimSpace(baseURL)
+	// Mantém a URL exata, removendo apenas barra final
+	url := strings.TrimRight(baseURL, "/")
 	if url == "" {
 		url = "https://mainnet-rpc-node-0001.nkn.org/mainnet/api/wallet"
 	}
-	return &Client{rpcURL: url}
+	return &Client{baseURL: url}
 }
 
-// Transaction mantida para compatibilidade, mas não será usada.
 type Transaction struct {
 	Hash   string
 	Amount *big.Int
-	Memo   string
+	From   string
+	To     string
 }
 
-// GetAddressBalance consulta o saldo de um endereço NKN via JSON‑RPC.
-func (c *Client) GetAddressBalance(address string) (*big.Int, error) {
-	payload := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "getbalance",
-		"params":  []string{address},
-		"id":      1,
-	}
-	jsonData, err := json.Marshal(payload)
+// GetRecentTransactions obtém as últimas transações de um endereço via API REST (GET).
+func (c *Client) GetRecentTransactions(address string) ([]Transaction, error) {
+	url := fmt.Sprintf("%s/transactions?address=%s&limit=20", c.baseURL, address)
+	resp, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("marshal payload: %w", err)
-	}
-
-	resp, err := http.Post(c.rpcURL, "application/json", bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("POST RPC: %w", err)
+		return nil, fmt.Errorf("GET transactions: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
-	var rpcResp struct {
-		Result json.RawMessage `json:"result"`
-		Error  *struct {
-			Message string `json:"message"`
-		} `json:"error"`
+	// Estrutura da resposta real (conforme você observou)
+	var apiResp struct {
+		Data struct {
+			List []struct {
+				Hash      string `json:"Hash"`
+				FromAddr  string `json:"FromAddr"`
+				ToAddr    string `json:"ToAddr"`
+				Value     string `json:"Value"`
+				Fee       string `json:"Fee"`
+				Timestamp string `json:"Timestamp"`
+			} `json:"list"`
+		} `json:"Data"`
 	}
-	if err := json.Unmarshal(body, &rpcResp); err != nil {
-		return nil, fmt.Errorf("parse RPC response: %w", err)
-	}
-	if rpcResp.Error != nil {
-		return nil, fmt.Errorf("RPC error: %s", rpcResp.Error.Message)
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("parse transactions: %w", err)
 	}
 
-	// O resultado pode ser string ou número
-	var balanceStr string
-	if err := json.Unmarshal(rpcResp.Result, &balanceStr); err != nil {
-		// tenta número
-		var balanceNum json.Number
-		if err2 := json.Unmarshal(rpcResp.Result, &balanceNum); err2 != nil {
-			return nil, fmt.Errorf("parse balance result: %w", err2)
+	var txs []Transaction
+	for _, t := range apiResp.Data.List {
+		amt, ok := new(big.Int).SetString(t.Value, 10)
+		if !ok {
+			continue
 		}
-		balanceStr = balanceNum.String()
+		txs = append(txs, Transaction{
+			Hash:   t.Hash,
+			Amount: amt,
+			From:   t.FromAddr,
+			To:     t.ToAddr,
+		})
 	}
-
-	balance, ok := new(big.Int).SetString(balanceStr, 10)
-	if !ok {
-		return nil, fmt.Errorf("invalid balance: %s", balanceStr)
-	}
-	return balance, nil
+	return txs, nil
 }
