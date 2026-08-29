@@ -82,8 +82,8 @@ func main() {
 		log.Fatalf("failed to setup frontend filesystem: %v", err)
 	}
 
-	// ---- Roteador HTTP (agora com bridgeRepo) ----
-	router := http.NewRouter(poolUC, logg, frontendFS, bridgeRepo)
+	// ---- Roteador HTTP (agora com ethClient) ----
+	router := http.NewRouter(poolUC, logg, frontendFS, bridgeRepo, ethClient)
 	srv := http.NewServer(":"+cfg.Port(), router)
 
 	go func() {

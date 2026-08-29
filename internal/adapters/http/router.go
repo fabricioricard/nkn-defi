@@ -1,17 +1,21 @@
 ﻿package http
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
+	"math/big"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/fabricioricard/nkn-defi/internal/adapters/ethereum"
 	"github.com/fabricioricard/nkn-defi/internal/adapters/nknclient"
 	"github.com/fabricioricard/nkn-defi/internal/adapters/postgres"
 	"github.com/fabricioricard/nkn-defi/internal/app"
@@ -21,20 +25,23 @@ type Router struct {
 	poolUC     *app.PoolUsecase
 	logg       *zap.Logger
 	bridgeRepo *postgres.BridgeRepository
+	ethClient  *ethereum.Client
 }
 
-// NewRouter recebe o sistema de arquivos do frontend e o repositório da Bridge.
+// NewRouter recebe o sistema de arquivos do frontend, o repositório da Bridge e o cliente Ethereum.
 func NewRouter(
 	poolUC *app.PoolUsecase,
 	logg *zap.Logger,
 	frontendFS fs.FS,
 	bridgeRepo *postgres.BridgeRepository,
+	ethClient *ethereum.Client,
 ) chi.Router {
 	r := chi.NewRouter()
 	rt := &Router{
 		poolUC:     poolUC,
 		logg:       logg,
 		bridgeRepo: bridgeRepo,
+		ethClient:  ethClient,
 	}
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -48,13 +55,12 @@ func NewRouter(
 		r.Post("/pools/{id}/liquidity/add", rt.addLiquidity)
 		r.Post("/pools/{id}/swap", rt.swap)
 
-		// Bridge (implementação real)
+		// Bridge
 		r.Post("/bridge/deposit", rt.createBridgeDeposit)
 		r.Get("/bridge/transactions", rt.getBridgeTransactions)
-		r.Delete("/bridge/deposit/{id}", rt.cancelBridgeDeposit) // ← nova rota
+		r.Delete("/bridge/deposit/{id}", rt.cancelBridgeDeposit)
 	})
 
-	// Serve o frontend React (Single Page Application)
 	r.Handle("/*", spaHandler(frontendFS))
 	return r
 }
@@ -93,10 +99,12 @@ func serveIndex(fsys fs.FS, w http.ResponseWriter) {
 }
 
 // createBridgeDeposit cria um novo pedido de depósito com endereço NKN único.
+// Se o hash da transação NKN for fornecido, o mint é feito imediatamente.
 func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EthAddress string `json:"eth_address"`
 		Amount     string `json:"amount"`
+		TxHash     string `json:"tx_hash,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -136,9 +144,9 @@ func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 		ID:                depositID,
 		EthAddress:        req.EthAddress,
 		Amount:            req.Amount,
-		NknDepositAddress: derivedAddr, // endereço único gerado
+		NknDepositAddress: derivedAddr,
 		Status:            "pending",
-		Memo:              depositID,   // mantido internamente para rastreabilidade
+		Memo:              depositID,
 		NknDerivedIndex:   int64(index),
 	}
 
@@ -148,10 +156,63 @@ func (rt *Router) createBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Se o hash da transação NKN for fornecido, realiza o mint imediatamente
+	if req.TxHash != "" {
+		// Converte o hash para bytes32
+		hashBytes, err := hexStringToBytes32(req.TxHash)
+		if err != nil {
+			rt.logg.Error("invalid tx hash", zap.Error(err))
+			http.Error(w, "invalid tx_hash", http.StatusBadRequest)
+			return
+		}
+
+		// Converte a quantidade para *big.Int
+		amountWei, ok := new(big.Int).SetString(req.Amount, 10)
+		if !ok {
+			http.Error(w, "invalid amount", http.StatusBadRequest)
+			return
+		}
+
+		// Chama o mint no contrato wNKN
+		mintTxHash, err := rt.ethClient.MintWNKN(
+			common.HexToAddress(req.EthAddress),
+			amountWei,
+			hashBytes,
+		)
+		if err != nil {
+			rt.logg.Error("failed to mint wNKN", zap.Error(err))
+			http.Error(w, "mint failed", http.StatusInternalServerError)
+			return
+		}
+
+		// Atualiza o depósito para completed
+		if err := rt.bridgeRepo.UpdateDepositAfterMint(
+			r.Context(),
+			dep.ID,
+			req.TxHash,
+			mintTxHash,
+			"completed",
+		); err != nil {
+			rt.logg.Error("failed to update deposit after mint", zap.Error(err))
+		}
+
+		// Retorna resposta com sucesso
+		resp := map[string]string{
+			"deposit_id":      depositID,
+			"deposit_address": derivedAddr,
+			"mint_tx_hash":    mintTxHash,
+			"status":          "completed",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	// Fluxo normal (sem tx_hash): apenas gera o endereço e fica pendente
 	resp := map[string]string{
 		"deposit_id":      depositID,
 		"deposit_address": derivedAddr,
-		"memo":            "", // memo não é mais necessário para o usuário
+		"memo":            "",
 		"expires_at":      time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 	}
 
@@ -172,7 +233,6 @@ func (rt *Router) cancelBridgeDeposit(w http.ResponseWriter, r *http.Request) {
 }
 
 // getBridgeTransactions retorna as últimas transações do usuário.
-// Espera um query parameter "eth_address".
 func (rt *Router) getBridgeTransactions(w http.ResponseWriter, r *http.Request) {
 	ethAddress := r.URL.Query().Get("eth_address")
 	if ethAddress == "" {
@@ -180,7 +240,6 @@ func (rt *Router) getBridgeTransactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Busca depósitos e retiradas reais
 	deposits, err := rt.bridgeRepo.ListDepositsByEthAddress(r.Context(), ethAddress)
 	if err != nil {
 		rt.logg.Error("failed to list deposits", zap.Error(err))
@@ -194,7 +253,6 @@ func (rt *Router) getBridgeTransactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Formato unificado esperado pelo frontend
 	type bridgeTx struct {
 		ID        string `json:"id"`
 		Type      string `json:"type"`
@@ -225,4 +283,19 @@ func (rt *Router) getBridgeTransactions(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(txs)
+}
+
+// hexStringToBytes32 converte uma string hexadecimal (com ou sem 0x) para [32]byte.
+func hexStringToBytes32(hexStr string) ([32]byte, error) {
+	var b [32]byte
+	clean := hexStr
+	if len(clean) >= 2 && clean[:2] == "0x" {
+		clean = clean[2:]
+	}
+	bytes, err := hex.DecodeString(clean)
+	if err != nil {
+		return b, err
+	}
+	copy(b[:], bytes)
+	return b, nil
 }

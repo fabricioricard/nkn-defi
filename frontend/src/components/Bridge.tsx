@@ -21,6 +21,7 @@ export default function Bridge() {
   const [amount, setAmount] = useState('');
   const [depositAddr, setDepositAddr] = useState('');
   const [memo, setMemo] = useState('');
+  const [txHash, setTxHash] = useState(''); // ← novo estado para o hash opcional
   const [txs, setTxs] = useState<Tx[]>([]);
   const toast = useToast();
 
@@ -62,10 +63,14 @@ export default function Bridge() {
       return;
     }
     try {
-      const data = await api.createBridgeDeposit(address, amount);
+      // Passa o txHash se presente (pode ser vazio)
+      const data = await api.createBridgeDeposit(address, amount, txHash);
       setDepositAddr(data.deposit_address);
       setMemo(data.memo);
-      toast({ title: 'Deposit address generated', status: 'success' });
+      toast({
+        title: txHash ? 'Deposit processed' : 'Deposit address generated',
+        status: txHash ? 'success' : 'info',
+      });
       loadTxs();
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, status: 'error' });
@@ -101,6 +106,19 @@ export default function Bridge() {
           isDisabled={!isConnected}
         />
 
+        {/* Novo campo opcional para hash da transação */}
+        <Text fontSize="sm" color="gray.400" alignSelf="flex-start" mt={2}>
+          Transaction Hash (optional)
+        </Text>
+        <Input
+          placeholder="0x..."
+          value={txHash}
+          onChange={(e) => setTxHash(e.target.value)}
+          bg="gray.700"
+          border="none"
+          isDisabled={!isConnected}
+        />
+
         <Button
           onClick={handleBridge}
           colorScheme="brand"
@@ -108,7 +126,7 @@ export default function Bridge() {
           isDisabled={!isConnected}
           leftIcon={<Icon as={FaWallet} />}
         >
-          Start Bridge
+          {txHash ? 'Start Bridge & Mint' : 'Start Bridge'}
         </Button>
         {depositAddr && (
           <>
@@ -130,7 +148,7 @@ export default function Bridge() {
             <Th>Amount</Th>
             <Th>Status</Th>
             <Th>Time</Th>
-            <Th></Th>   {/* coluna extra para o botão de ação */}
+            <Th></Th>
           </Tr>
         </Thead>
         <Tbody>
