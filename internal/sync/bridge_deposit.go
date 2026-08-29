@@ -66,8 +66,9 @@ func (w *BridgeDepositWorker) Start(ctx context.Context) {
 					continue
 				}
 
-				// Usa o saldo recebido como valor a cunhar
-				amountWei := balance
+				// Converte de unidades NKN (8 decimais) para wei (18 decimais)
+				multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(10), nil) // 10^10
+				amountWei := new(big.Int).Mul(balance, multiplier)
 
 				// Hash zero (não temos o hash da transação)
 				var zeroHash [32]byte
