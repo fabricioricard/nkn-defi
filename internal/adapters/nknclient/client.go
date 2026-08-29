@@ -16,9 +16,11 @@ type Client struct {
 }
 
 func NewClient(baseURL string) *Client {
-	// Remove prefixos e barras finais para obter a URL RPC limpa
-	url := strings.TrimPrefix(strings.TrimPrefix(baseURL, "http://"), "https://")
-	url = strings.TrimRight(url, "/")
+	// Usa o endpoint padrão se nenhum for fornecido
+	url := strings.TrimSpace(baseURL)
+	if url == "" {
+		url = "https://mainnet-rpc-node-0001.nkn.org/mainnet/api/wallet"
+	}
 	return &Client{rpcURL: url}
 }
 
@@ -28,10 +30,7 @@ type Transaction struct {
 	Memo   string
 }
 
-// GetRecentTransactions obtém as últimas transações de um endereço via JSON‑RPC.
 func (c *Client) GetRecentTransactions(address string) ([]Transaction, error) {
-	// Usa o endpoint RPC público da NKN
-	rpcEndpoint := "https://" + c.rpcURL
 	payload := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "getaddresstransactions",
@@ -43,7 +42,7 @@ func (c *Client) GetRecentTransactions(address string) ([]Transaction, error) {
 		return nil, fmt.Errorf("marshal payload: %w", err)
 	}
 
-	resp, err := http.Post(rpcEndpoint, "application/json", bytes.NewReader(jsonData))
+	resp, err := http.Post(c.rpcURL, "application/json", bytes.NewReader(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("POST RPC: %w", err)
 	}
@@ -63,7 +62,7 @@ func (c *Client) GetRecentTransactions(address string) ([]Transaction, error) {
 		return nil, fmt.Errorf("RPC error: %s", rpcResp.Error.Message)
 	}
 
-	// O resultado pode ser uma lista de transações ou vazio
+	// Aceita diferentes formatos de resposta
 	var txsRaw []struct {
 		Hash   string `json:"hash"`
 		Value  string `json:"value"`
