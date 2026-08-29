@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -15,7 +16,6 @@ type Client struct {
 }
 
 func NewClient(baseURL string) *Client {
-	// Endpoint JSON-RPC do explorer oficial
 	url := strings.TrimSpace(baseURL)
 	if url == "" {
 		url = "https://explorer.nkn.org/api"
@@ -24,6 +24,7 @@ func NewClient(baseURL string) *Client {
 }
 
 // GetAddressBalance consulta o saldo de um endereço usando o método nativo getbalancebyaddr.
+// Suporta múltiplos formatos de resposta (string, número, objeto).
 func (c *Client) GetAddressBalance(address string) (*big.Int, error) {
 	payload := map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -58,21 +59,48 @@ func (c *Client) GetAddressBalance(address string) (*big.Int, error) {
 		return nil, fmt.Errorf("RPC error: %s", rpcResp.Error.Message)
 	}
 
-	// O resultado pode ser string ou número
+	// Tenta diferentes formatos
+
+	// 1. String simples
 	var balanceStr string
-	if err := json.Unmarshal(rpcResp.Result, &balanceStr); err != nil {
-		var balanceNum json.Number
-		if err2 := json.Unmarshal(rpcResp.Result, &balanceNum); err2 != nil {
-			return nil, fmt.Errorf("parse balance result: %w", err2)
+	if err := json.Unmarshal(rpcResp.Result, &balanceStr); err == nil {
+		if balance, ok := new(big.Int).SetString(balanceStr, 10); ok {
+			return balance, nil
 		}
-		balanceStr = balanceNum.String()
 	}
 
-	balance, ok := new(big.Int).SetString(balanceStr, 10)
-	if !ok {
-		return nil, fmt.Errorf("invalid balance: %s", balanceStr)
+	// 2. Número
+	var balanceNum json.Number
+	if err := json.Unmarshal(rpcResp.Result, &balanceNum); err == nil {
+		balanceStr = balanceNum.String()
+		if balance, ok := new(big.Int).SetString(balanceStr, 10); ok {
+			return balance, nil
+		}
 	}
-	return balance, nil
+
+	// 3. Objeto com chaves comuns
+	var obj map[string]interface{}
+	if err := json.Unmarshal(rpcResp.Result, &obj); err == nil {
+		for _, key := range []string{"amount", "balance", "value", "Balance", "Amount", "Result"} {
+			if v, exists := obj[key]; exists {
+				switch val := v.(type) {
+				case string:
+					balanceStr = val
+				case float64:
+					balanceStr = strconv.FormatFloat(val, 'f', 0, 64)
+				case json.Number:
+					balanceStr = val.String()
+				}
+				if balanceStr != "" {
+					if balance, ok := new(big.Int).SetString(balanceStr, 10); ok {
+						return balance, nil
+					}
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("unable to extract balance from result")
 }
 
 // GetRecentTransactions mantida para compatibilidade, mas retorna erro (não suportado por nós RPC).
