@@ -37,7 +37,7 @@ func NewBridgeDepositWorker(
 func (w *BridgeDepositWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	log.Println("BridgeDepositWorker started (balance polling)")
+	log.Println("BridgeDepositWorker started (balance polling with flexible conversion)")
 
 	for {
 		select {
@@ -54,7 +54,6 @@ func (w *BridgeDepositWorker) Start(ctx context.Context) {
 			for _, dep := range deposits {
 				log.Printf("checking deposit %s at address %s", dep.ID, dep.NknDepositAddress)
 
-				// Consulta o saldo do endereço único
 				balance, err := w.nknClient.GetAddressBalance(dep.NknDepositAddress)
 				if err != nil {
 					log.Printf("error fetching balance for %s: %v", dep.NknDepositAddress, err)
@@ -66,11 +65,24 @@ func (w *BridgeDepositWorker) Start(ctx context.Context) {
 					continue
 				}
 
-				// Converte de unidades NKN (8 decimais) para wei (18 decimais)
-				multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(10), nil) // 10^10
-				amountWei := new(big.Int).Mul(balance, multiplier)
+				// Converte o saldo para wei (18 decimais) de forma flexível.
+				// Se o saldo for menor que 10^10, assume que está em NKN inteiro.
+				// Caso contrário, assume que está em unidades de 8 decimais.
+				threshold := new(big.Int).Exp(big.NewInt(10), big.NewInt(10), nil) // 10^10
+				var amountWei *big.Int
 
-				// Hash zero (não temos o hash da transação)
+				if balance.Cmp(threshold) < 0 {
+					// Saldo em NKN (ex: 1 NKN) -> multiplica por 10^18
+					multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+					amountWei = new(big.Int).Mul(balance, multiplier)
+				} else {
+					// Saldo em unidades mínimas (8 decimais) -> multiplica por 10^10
+					multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(10), nil)
+					amountWei = new(big.Int).Mul(balance, multiplier)
+				}
+
+				log.Printf("balance raw: %s, amountWei to mint: %s", balance.String(), amountWei.String())
+
 				var zeroHash [32]byte
 
 				mintTxHash, err := w.ethClient.MintWNKN(
