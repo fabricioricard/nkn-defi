@@ -11,10 +11,10 @@ async function fetchJSON(url: string, options?: RequestInit) {
 
 export const api = {
   // Bridge
-  createBridgeDeposit: (eth_address: string, amount: string, tx_hash?: string) =>
+  createBridgeDeposit: (eth_address: string, amount: string) =>
     fetchJSON('/bridge/deposit', {
       method: 'POST',
-      body: JSON.stringify({ eth_address, amount, tx_hash }),
+      body: JSON.stringify({ eth_address, amount }),
     }),
 
   getBridgeTransactions: (ethAddress: string) =>
