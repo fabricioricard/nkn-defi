@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import {
   VStack, Heading, Input, Button, HStack, Text,
-  Select, useToast,
+  Select, useToast, Alert, AlertIcon,
 } from '@chakra-ui/react';
 import {
   useAccount, useWriteContract, useWaitForTransactionReceipt,
+  useChainId,
 } from 'wagmi';
 import { parseUnits } from 'viem';
 
@@ -52,9 +53,11 @@ const WNKN_ADDRESS = '0x1B24ED102b530887B4388b61FB612121f6eD635E';
 const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const SWAP_ROUTER = '0x2626664c2603336E57B271c5C0b26F421741e481';
 const POOL_FEE = 500; // 0,05%
+const BASE_CHAIN_ID = 8453;
 
 export default function Swap() {
-  const { address } = useAccount();
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
   const toast = useToast();
   const { writeContractAsync: writeApprove, isPending: isApproving } = useWriteContract();
   const { writeContractAsync: writeSwap, isPending: isSwapping } = useWriteContract();
@@ -64,14 +67,27 @@ export default function Swap() {
   const [amountIn, setAmountIn] = useState('');
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
 
-  const { isLoading: isWaiting, isSuccess: swapSuccess } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
+  const { isLoading: isWaiting } = useWaitForTransactionReceipt({ hash: txHash });
+
+  const isWrongNetwork = isConnected && chainId !== BASE_CHAIN_ID;
 
   const handleApprove = async () => {
-    if (!address || !amountIn) return;
+    if (!isConnected) {
+      toast({ title: 'Connect your wallet first', status: 'warning' });
+      return;
+    }
+    if (isWrongNetwork) {
+      toast({ title: 'Switch network to Base', status: 'warning' });
+      return;
+    }
+    if (!amountIn || parseFloat(amountIn) <= 0) {
+      toast({ title: 'Enter a valid amount', status: 'warning' });
+      return;
+    }
+
     const tokenAddress = tokenIn === 'wNKN' ? WNKN_ADDRESS : USDC_ADDRESS;
     const amountWei = parseUnits(amountIn, tokenIn === 'wNKN' ? 18 : 6);
+
     try {
       await writeApprove({
         address: tokenAddress,
@@ -86,7 +102,9 @@ export default function Swap() {
   };
 
   const handleSwap = async () => {
-    if (!address || !amountIn) return;
+    if (!isConnected || isWrongNetwork) return;
+    if (!amountIn || parseFloat(amountIn) <= 0) return;
+
     const tokenInAddress = tokenIn === 'wNKN' ? WNKN_ADDRESS : USDC_ADDRESS;
     const tokenOutAddress = tokenOut === 'wNKN' ? WNKN_ADDRESS : USDC_ADDRESS;
     const amountInWei = parseUnits(amountIn, tokenIn === 'wNKN' ? 18 : 6);
@@ -120,6 +138,13 @@ export default function Swap() {
   return (
     <VStack spacing={6} maxW="450px" mx="auto">
       <Heading size="lg" color="brand.400">Swap (Base)</Heading>
+
+      {isWrongNetwork && (
+        <Alert status="warning">
+          <AlertIcon />
+          Please switch your wallet to Base network.
+        </Alert>
+      )}
 
       <VStack spacing={4} bg="gray.800" p={6} borderRadius="lg" border="1px solid" borderColor="brand.700" w="100%">
         <Text alignSelf="flex-start" fontSize="sm" color="gray.400">From</Text>
@@ -166,7 +191,6 @@ export default function Swap() {
           </Select>
           <Input
             placeholder="0.0"
-            value={swapSuccess ? 'Success' : ''}
             isReadOnly
             bg="gray.700"
             border="none"
@@ -180,6 +204,7 @@ export default function Swap() {
             colorScheme="gray"
             w="50%"
             isLoading={isApproving}
+            disabled={!amountIn || isWrongNetwork}
           >
             Approve
           </Button>
@@ -188,7 +213,7 @@ export default function Swap() {
             colorScheme="brand"
             w="50%"
             isLoading={isSwapping || isWaiting}
-            disabled={!amountIn}
+            disabled={!amountIn || isWrongNetwork}
           >
             {isWaiting ? 'Confirming...' : 'Swap'}
           </Button>
